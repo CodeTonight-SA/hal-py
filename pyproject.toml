@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hal-py"
+version = "0.1.0"
+description = "HAPPI/1.0 Python client library — AI as a syscall"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "CodeTonight (Pty) Ltd" }]
+keywords = ["happi", "hal", "ai", "syscall", "llm", "protocol"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/CodeTonight-SA/hal-py"
+"Reference Spec" = "https://github.com/CodeTonight-SA/HAL/blob/main/happi.md"
+
+[tool.setuptools.packages.find]
+include = ["hal_py*"]
+exclude = ["tests*"]
