@@ -23,7 +23,7 @@ from .events import (
     EventError,
     from_json_line,
     is_post_terminator,
-    is_terminal,
+    is_outcome,
 )
 
 DEFAULT_RUNTIME: tuple[str, ...] = ("happi", "run")
@@ -84,7 +84,7 @@ def _check_terminal(events: list[Event], returncode: int, stderr: str) -> None:
             f"runtime produced no events (exit={returncode}, stderr={stderr!r})"
         )
     outcome_at = next(
-        (i for i, e in enumerate(events) if is_terminal(e)),
+        (i for i, e in enumerate(events) if is_outcome(e)),
         None,
     )
     if outcome_at is None:

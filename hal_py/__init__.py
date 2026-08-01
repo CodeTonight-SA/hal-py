@@ -45,6 +45,7 @@ from .events import (
     ToolCallEvent,
     ToolResultEvent,
     is_post_terminator,
+    is_outcome,
     is_terminal,
 )
 
@@ -72,6 +73,7 @@ __all__ = [
     "ErrorEvent",
     "IdrEvent",
     "ContextEvent",
+    "is_outcome",
     "is_terminal",
     "is_post_terminator",
     "events",

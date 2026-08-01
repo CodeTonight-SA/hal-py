@@ -19,6 +19,7 @@ from hal_py.events import (
     ToolCallEvent,
     ToolResultEvent,
     from_json_line,
+    is_outcome,
     is_post_terminator,
     is_terminal,
     parse_stream,
@@ -165,6 +166,43 @@ def test_an_unknown_type_is_never_mistaken_for_the_end_of_a_stream():
     event = from_json_line(line)
     assert not is_terminal(event)
     assert not is_post_terminator(event)
+
+
+def test_is_outcome_is_the_name_and_is_terminal_still_works():
+    """hal-go and hal-js both call this IsOutcome/isOutcome; hal-py was the
+    odd one out with is_terminal, so identical logic read differently
+    depending on which language you were in.
+
+    The old name was also actively misleading: "terminal" reads as "the end of
+    the stream", which stopped being true in v1.1 when idr and context records
+    began arriving AFTER the outcome. The obvious idiom it invites —
+    `if is_terminal(e): break` — silently discards the audit receipt.
+
+    is_terminal is kept as an alias so existing callers keep working, and
+    both must agree.
+    """
+    completed = from_json_line(
+        '{"v":"happi/1.3","id":"r","type":"completed","ts":0}')
+    idr = from_json_line(
+        '{"v":"happi/1.3","id":"r","type":"idr","ts":1,"idr_ref":{}}')
+    assert is_outcome(completed)
+    assert not is_outcome(idr)
+    assert is_terminal(completed) == is_outcome(completed)
+    assert is_terminal(idr) == is_outcome(idr)
+
+
+def test_the_outcome_is_not_the_last_event_in_an_audited_stream():
+    """The whole reason the rename matters: a caller that stops at the outcome
+    loses the audit record that follows it."""
+    stream = (
+        '{"v":"happi/1.3","id":"r","type":"completed","ts":0}\n'
+        '{"v":"happi/1.3","id":"r","type":"idr","ts":1,"idr_ref":{}}\n'
+    )
+    events = list(parse_stream(stream))
+    assert is_outcome(events[0])
+    # The outcome is at index 0 of 2 — stopping there drops the receipt.
+    assert events[-1].type == "idr"
+    assert is_post_terminator(events[-1])
 
 
 def test_a_malformed_event_still_raises_even_though_unknown_types_do_not():

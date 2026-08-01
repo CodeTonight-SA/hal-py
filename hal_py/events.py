@@ -270,15 +270,35 @@ OUTCOME_TYPES = ("completed", "error")
 POST_TERMINATOR_TYPES = ("idr", "context")
 
 
-def is_terminal(event: Event) -> bool:
+def is_outcome(event: Event) -> bool:
     """Return True if this event reports the dispatch outcome.
 
-    Note (v1.1+): the outcome event is NOT always the LAST event. When
-    flags.audit=true the runtime appends an `idr` record after it, and
-    cmd `context.append` appends a `context` record. Use is_post_terminator
-    to recognise those; do not treat their presence as a protocol violation.
+    Since v1.1 the outcome is NOT the last event: `flags.audit=true` appends
+    an `idr` record after it, and `context.append` appends a `context` record.
+    Use is_post_terminator to recognise those, and drain the stream rather
+    than stopping here.
     """
     return event.type in OUTCOME_TYPES
+
+
+def is_terminal(event: Event) -> bool:
+    """Deprecated alias for is_outcome. Prefer is_outcome.
+
+    The old name was actively misleading and is kept only so existing callers
+    keep working. "Terminal" reads as "the end of the stream", which stopped
+    being true in v1.1 when idr and context records began arriving AFTER the
+    outcome. The obvious idiom it invites —
+
+        for event in stream:
+            if is_terminal(event):
+                break
+
+    — silently discards the audit receipt, which on an audit-bearing protocol
+    is the single worst event to drop. hal-go and hal-js both call this
+    IsOutcome/isOutcome; hal-py was the odd one out, so the same code read
+    differently depending on which language you happened to be in.
+    """
+    return is_outcome(event)
 
 
 def is_post_terminator(event: Event) -> bool:
