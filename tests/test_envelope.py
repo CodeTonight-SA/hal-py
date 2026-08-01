@@ -171,7 +171,7 @@ def test_to_json_is_compact_and_parseable():
     assert " " not in out
     # Round-trips cleanly through json.loads.
     parsed = json.loads(out)
-    assert parsed == {"v": "happi/1.0", "id": "r", "cmd": "version"}
+    assert parsed == {"v": "happi/1.3", "id": "r", "cmd": "version"}
 
 
 def test_unknown_field_round_trips_through_to_json():

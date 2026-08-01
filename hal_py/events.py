@@ -1,7 +1,8 @@
-"""HAPPI/1.0 events — the seven event types.
+"""HAPPI/1.3 events — the seven streaming types plus two terminators.
 
-Per happi.md axiom 2: seven event types are sufficient. Every event carries
-v, id (echoes envelope id), type, ts (ms integer). Per-type fields:
+Per happi.md axiom 2: seven event types are sufficient for streaming. Every
+event carries v, id (echoes envelope id), type, ts (ms integer). Per-type
+fields:
 
     started      — (none)
     delta        — text
@@ -10,6 +11,17 @@ v, id (echoes envelope id), type, ts (ms integer). Per-type fields:
     sub_request  — envelope
     completed    — usage (optional)
     error        — code, message
+
+v1.1 added two non-streaming terminators, emitted AFTER completed/error:
+
+    idr          — idr_ref      (audit receipt: "what happened in this run?")
+    context      — context_ref  (memory-chain link: "what is this belief?")
+
+Version handling follows happi.md: this library ACCEPTS envelopes and events
+carrying any version in ACCEPTED_VERSIONS ("happi/1.0".."happi/1.3") and EMITS
+HAPPI_VERSION. A runtime always stamps events with its own version, never the
+envelope's — so a v1.0 request to a v1.3 runtime yields v1.3 events, and a
+strict equality check would reject a perfectly valid stream.
 
 Provider-specific data lives under provider.* sub-fields, which round-trip
 through the typed parser via the `extra` dict.
@@ -20,7 +32,17 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Iterator
 
-HAPPI_VERSION = "happi/1.0"
+from . import happi
+
+#: Protocol version this library emits.
+HAPPI_VERSION = happi.VERSION
+
+#: Protocol versions that existed when this module was written. Informational
+#: only — acceptance is decided by happi.is_accepted, which admits any
+#: happi/1.x. This matters most here: a runtime stamps events with its OWN
+#: version, so a client meeting a newer runtime sees versions this library has
+#: never heard of. Rejecting them would silently drop the entire stream.
+ACCEPTED_VERSIONS = happi.KNOWN_VERSIONS
 
 VALID_TYPES = (
     "started",
@@ -30,7 +52,12 @@ VALID_TYPES = (
     "sub_request",
     "completed",
     "error",
+    "idr",
+    "context",
 )
+
+#: Valid `context_ref.kind` values per happi.md CONTEXT section.
+CONTEXT_KINDS = ("context-delta", "context-snapshot", "context-supersede")
 
 # Standard error codes per happi.md.
 ERROR_CODES = ("parse_error", "unsupported_cmd", "auth_error", "runtime_error")
@@ -97,8 +124,60 @@ class ErrorEvent(Event):
     message: str = ""
 
 
+@dataclass
+class IdrEvent(Event):
+    """Intent Decision Record — the audit receipt for one dispatch (v1.1).
+
+    `idr_ref` carries the content hash of (envelope JSON + event NDJSON):
+    sha256 (required), model_versions (required), cid and block_anchor
+    (optional). Emitted after completed/error when flags.audit=true, or
+    explicitly via cmd `idr.emit`.
+    """
+
+    type: str = "idr"
+    idr_ref: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ContextEvent(Event):
+    """Replayable memory-chain link — the structural twin of `idr` (v1.1).
+
+    `context_ref` content-addresses the *decision body* (excluding the
+    volatile id/ts/audit fields), so two records with identical semantic
+    content share one sha256 — the dedup/merkle coordinate. Required:
+    sha256, kind, model_versions. Optional: predecessor_context,
+    snapshot_ref. Emitted via cmd `context.append`.
+    """
+
+    type: str = "context"
+    context_ref: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class UnknownEvent(Event):
+    """An event whose `type` this library does not recognise.
+
+    The spec makes this mandatory rather than optional: "unknown event
+    types/fields are ignored, never rejected". A newer runtime may introduce
+    event types that did not exist when this library was written, and a
+    consumer is required to forward them inertly rather than fail.
+
+    Rejecting them would also make the forward-compatible version policy
+    pointless — there is no value in accepting a happi/1.9 stream if the first
+    event type introduced in 1.9 raises. Everything the event carried is
+    preserved in `extra`, so a caller that DOES understand the new type can
+    still read it.
+
+    It is deliberately neither an outcome nor a post-terminator, so an unknown
+    event can never be mistaken for the end of a stream.
+    """
+
+    type: str = "unknown"
+
+
 # Dispatch table: type-string -> (class, required-fields)
-# Keeps from_dict's CC low by avoiding nested if/elif chains.
+# Keeps from_dict's CC low by avoiding nested if/elif chains. A type absent
+# from this table is not an error — see from_dict and UnknownEvent.
 _DISPATCH: dict[str, tuple[type, tuple[str, ...]]] = {
     "started": (StartedEvent, ()),
     "delta": (DeltaEvent, ("text",)),
@@ -107,6 +186,8 @@ _DISPATCH: dict[str, tuple[type, tuple[str, ...]]] = {
     "sub_request": (SubRequestEvent, ("envelope",)),
     "completed": (CompletedEvent, ()),
     "error": (ErrorEvent, ("code", "message")),
+    "idr": (IdrEvent, ("idr_ref",)),
+    "context": (ContextEvent, ("context_ref",)),
 }
 
 # Fields shared by every event — already extracted before dispatch.
@@ -115,13 +196,15 @@ _BASE_FIELDS = ("v", "id", "type", "ts")
 
 def _validate_base(data: dict[str, Any]) -> None:
     """Raise EventError if base fields are wrong/missing."""
-    if data.get("v") != HAPPI_VERSION:
-        raise EventError(f"unsupported version: {data.get('v')!r}")
+    if not happi.is_accepted(data.get("v")):
+        raise EventError(
+            f"unsupported version: {data.get('v')!r} "
+            f"(accepted: {happi.accepted_list()})"
+        )
     if not isinstance(data.get("id"), str) or not data["id"]:
         raise EventError("missing or invalid event 'id'")
-    etype = data.get("type")
-    if etype not in VALID_TYPES:
-        raise EventError(f"unknown event type: {etype!r}")
+    if not isinstance(data.get("type"), str) or not data["type"]:
+        raise EventError("missing or invalid event 'type'")
     if not isinstance(data.get("ts"), int) or data["ts"] < 0:
         raise EventError("missing or invalid 'ts' (must be non-negative int)")
 
@@ -134,10 +217,22 @@ def _check_required(data: dict[str, Any], required: Iterable[str]) -> None:
 
 
 def from_dict(data: dict[str, Any]) -> Event:
-    """Build the right typed Event subclass from a dict."""
+    """Build the right typed Event subclass from a dict.
+
+    An event whose `type` this library does not recognise becomes an
+    UnknownEvent rather than an error. The spec requires it: "unknown event
+    types/fields are ignored, never rejected". Rejecting them would undo the
+    forward-compatible version policy — there would be no point accepting a
+    happi/1.9 stream if the first event type introduced in 1.9 killed it.
+    """
     if not isinstance(data, dict):
         raise EventError("event must be a JSON object")
     _validate_base(data)
+    if data["type"] not in _DISPATCH:
+        return UnknownEvent(
+            v=data["v"], id=data["id"], ts=data["ts"], type=data["type"],
+            extra={k: val for k, val in data.items() if k not in _BASE_FIELDS},
+        )
     cls, required = _DISPATCH[data["type"]]
     _check_required(data, required)
     extra = {k: v for k, v in data.items()
@@ -167,6 +262,45 @@ def parse_stream(text: str) -> Iterator[Event]:
             yield from_json_line(line)
 
 
+#: Events that report the OUTCOME of a dispatch. Exactly one per stream.
+OUTCOME_TYPES = ("completed", "error")
+
+#: Non-streaming records emitted AFTER the outcome event (v1.1). A stream may
+#: carry at most one of each; they do not replace the outcome event.
+POST_TERMINATOR_TYPES = ("idr", "context")
+
+
+def is_outcome(event: Event) -> bool:
+    """Return True if this event reports the dispatch outcome.
+
+    Since v1.1 the outcome is NOT the last event: `flags.audit=true` appends
+    an `idr` record after it, and `context.append` appends a `context` record.
+    Use is_post_terminator to recognise those, and drain the stream rather
+    than stopping here.
+    """
+    return event.type in OUTCOME_TYPES
+
+
 def is_terminal(event: Event) -> bool:
-    """Return True if this event ends the stream (completed or error)."""
-    return event.type in ("completed", "error")
+    """Deprecated alias for is_outcome. Prefer is_outcome.
+
+    The old name was actively misleading and is kept only so existing callers
+    keep working. "Terminal" reads as "the end of the stream", which stopped
+    being true in v1.1 when idr and context records began arriving AFTER the
+    outcome. The obvious idiom it invites —
+
+        for event in stream:
+            if is_terminal(event):
+                break
+
+    — silently discards the audit receipt, which on an audit-bearing protocol
+    is the single worst event to drop. hal-go and hal-js both call this
+    IsOutcome/isOutcome; hal-py was the odd one out, so the same code read
+    differently depending on which language you happened to be in.
+    """
+    return is_outcome(event)
+
+
+def is_post_terminator(event: Event) -> bool:
+    """Return True for records emitted after the outcome event (idr/context)."""
+    return event.type in POST_TERMINATOR_TYPES

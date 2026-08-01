@@ -1,4 +1,4 @@
-"""HAPPI/1.0 client — sync + async dispatch via subprocess.
+"""HAPPI/1.3 client — sync + async dispatch via subprocess.
 
 Per the four axioms (happi.md): CLI (stdio) is the canonical transport.
 A HAPPI client writes one JSON envelope to stdin and reads NDJSON events
@@ -18,7 +18,13 @@ import subprocess
 from typing import AsyncIterator, Iterable, Iterator, Sequence
 
 from .envelope import Envelope
-from .events import Event, EventError, from_json_line
+from .events import (
+    Event,
+    EventError,
+    from_json_line,
+    is_post_terminator,
+    is_outcome,
+)
 
 DEFAULT_RUNTIME: tuple[str, ...] = ("happi", "run")
 """Default runtime command. Override per-call to use a different runtime."""
@@ -65,15 +71,31 @@ def _parse_lines(lines: Iterable[str]) -> Iterator[Event]:
 
 
 def _check_terminal(events: list[Event], returncode: int, stderr: str) -> None:
-    """Confirm the stream ends with completed or error; raise otherwise."""
+    """Confirm the stream carries an outcome event; raise otherwise.
+
+    The outcome (completed/error) is not necessarily the LAST event: per
+    happi.md v1.1 the runtime appends an `idr` record when flags.audit=true,
+    and a `context` record for cmd `context.append`. Those legitimately
+    trail the outcome, so this checks that an outcome is PRESENT and that
+    anything after it is a recognised post-terminator.
+    """
     if not events:
         raise DispatchError(
             f"runtime produced no events (exit={returncode}, stderr={stderr!r})"
         )
-    last = events[-1]
-    if last.type not in ("completed", "error"):
+    outcome_at = next(
+        (i for i, e in enumerate(events) if is_outcome(e)),
+        None,
+    )
+    if outcome_at is None:
         raise DispatchError(
-            f"runtime stream did not terminate: last={last.type!r} "
+            f"runtime stream did not terminate: last={events[-1].type!r} "
+            f"(exit={returncode})"
+        )
+    trailing = [e.type for e in events[outcome_at + 1:] if not is_post_terminator(e)]
+    if trailing:
+        raise DispatchError(
+            f"runtime emitted {trailing!r} after the outcome event "
             f"(exit={returncode})"
         )
 

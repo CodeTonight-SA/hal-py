@@ -19,6 +19,8 @@ from hal_py.events import (
     ToolCallEvent,
     ToolResultEvent,
     from_json_line,
+    is_outcome,
+    is_post_terminator,
     is_terminal,
     parse_stream,
 )
@@ -44,13 +46,24 @@ SAMPLE_STREAM = (
 )
 
 
-def test_all_seven_types_present_in_module():
-    # Falsifier for axiom 2 at the API surface.
+def test_all_seven_streaming_types_present_in_module():
+    # Falsifier for axiom 2 at the API surface: the 7 streaming types must
+    # all still be present. Written as a subset check so adding a v1.1
+    # terminator cannot silently delete one of the original seven.
+    assert {
+        "started", "delta", "tool_call", "tool_result",
+        "sub_request", "completed", "error",
+    } <= set(VALID_TYPES)
+
+
+def test_v11_terminators_present_in_module():
+    # v1.1 adds two non-streaming terminators on top of the 7 streaming types.
     assert set(VALID_TYPES) == {
         "started", "delta", "tool_call", "tool_result",
         "sub_request", "completed", "error",
+        "idr", "context",
     }
-    assert len(VALID_TYPES) == 7
+    assert len(VALID_TYPES) == 9
 
 
 def test_parse_stream_yields_all_seven_types():
@@ -131,10 +144,76 @@ def test_error_fields():
 # Validation failures
 # ---------------------------------------------------------------------------
 
-def test_unknown_type_raises():
+def test_unknown_type_is_tolerated_not_rejected():
+    """The spec requires it: "unknown event types/fields are ignored, never
+    rejected".
+
+    This test previously asserted the opposite — that an unrecognised type
+    must raise. That contradicted the spec AND undid the forward-compatible
+    version policy: there is no value in accepting a happi/1.9 stream if the
+    first event type introduced in 1.9 kills it.
+    """
+    line = '{"v":"happi/1.0","id":"r","type":"surprise","ts":0,"payload":7}'
+    event = from_json_line(line)
+    assert event.type == "surprise"
+    # Whatever it carried is preserved, so a caller that DOES understand the
+    # new type can still read it.
+    assert event.extra["payload"] == 7
+
+
+def test_an_unknown_type_is_never_mistaken_for_the_end_of_a_stream():
     line = '{"v":"happi/1.0","id":"r","type":"surprise","ts":0}'
-    with pytest.raises(EventError, match="unknown event type"):
-        from_json_line(line)
+    event = from_json_line(line)
+    assert not is_terminal(event)
+    assert not is_post_terminator(event)
+
+
+def test_is_outcome_is_the_name_and_is_terminal_still_works():
+    """hal-go and hal-js both call this IsOutcome/isOutcome; hal-py was the
+    odd one out with is_terminal, so identical logic read differently
+    depending on which language you were in.
+
+    The old name was also actively misleading: "terminal" reads as "the end of
+    the stream", which stopped being true in v1.1 when idr and context records
+    began arriving AFTER the outcome. The obvious idiom it invites —
+    `if is_terminal(e): break` — silently discards the audit receipt.
+
+    is_terminal is kept as an alias so existing callers keep working, and
+    both must agree.
+    """
+    completed = from_json_line(
+        '{"v":"happi/1.3","id":"r","type":"completed","ts":0}')
+    idr = from_json_line(
+        '{"v":"happi/1.3","id":"r","type":"idr","ts":1,"idr_ref":{}}')
+    assert is_outcome(completed)
+    assert not is_outcome(idr)
+    assert is_terminal(completed) == is_outcome(completed)
+    assert is_terminal(idr) == is_outcome(idr)
+
+
+def test_the_outcome_is_not_the_last_event_in_an_audited_stream():
+    """The whole reason the rename matters: a caller that stops at the outcome
+    loses the audit record that follows it."""
+    stream = (
+        '{"v":"happi/1.3","id":"r","type":"completed","ts":0}\n'
+        '{"v":"happi/1.3","id":"r","type":"idr","ts":1,"idr_ref":{}}\n'
+    )
+    events = list(parse_stream(stream))
+    assert is_outcome(events[0])
+    # The outcome is at index 0 of 2 — stopping there drops the receipt.
+    assert events[-1].type == "idr"
+    assert is_post_terminator(events[-1])
+
+
+def test_a_malformed_event_still_raises_even_though_unknown_types_do_not():
+    """Tolerating unknown TYPES must not become tolerating malformed events —
+    otherwise the parser would accept anything at all."""
+    with pytest.raises(EventError):
+        from_json_line('{"v":"happi/1.0","id":"r","ts":0}')          # no type
+    with pytest.raises(EventError):
+        from_json_line('{"v":"happi/1.0","type":"surprise","ts":0}')  # no id
+    with pytest.raises(EventError):
+        from_json_line('{"v":"happi/9.9","id":"r","type":"surprise","ts":0}')
 
 
 def test_missing_text_in_delta_raises():
