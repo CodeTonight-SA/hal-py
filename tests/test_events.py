@@ -19,6 +19,7 @@ from hal_py.events import (
     ToolCallEvent,
     ToolResultEvent,
     from_json_line,
+    is_post_terminator,
     is_terminal,
     parse_stream,
 )
@@ -142,10 +143,39 @@ def test_error_fields():
 # Validation failures
 # ---------------------------------------------------------------------------
 
-def test_unknown_type_raises():
+def test_unknown_type_is_tolerated_not_rejected():
+    """The spec requires it: "unknown event types/fields are ignored, never
+    rejected".
+
+    This test previously asserted the opposite — that an unrecognised type
+    must raise. That contradicted the spec AND undid the forward-compatible
+    version policy: there is no value in accepting a happi/1.9 stream if the
+    first event type introduced in 1.9 kills it.
+    """
+    line = '{"v":"happi/1.0","id":"r","type":"surprise","ts":0,"payload":7}'
+    event = from_json_line(line)
+    assert event.type == "surprise"
+    # Whatever it carried is preserved, so a caller that DOES understand the
+    # new type can still read it.
+    assert event.extra["payload"] == 7
+
+
+def test_an_unknown_type_is_never_mistaken_for_the_end_of_a_stream():
     line = '{"v":"happi/1.0","id":"r","type":"surprise","ts":0}'
-    with pytest.raises(EventError, match="unknown event type"):
-        from_json_line(line)
+    event = from_json_line(line)
+    assert not is_terminal(event)
+    assert not is_post_terminator(event)
+
+
+def test_a_malformed_event_still_raises_even_though_unknown_types_do_not():
+    """Tolerating unknown TYPES must not become tolerating malformed events —
+    otherwise the parser would accept anything at all."""
+    with pytest.raises(EventError):
+        from_json_line('{"v":"happi/1.0","id":"r","ts":0}')          # no type
+    with pytest.raises(EventError):
+        from_json_line('{"v":"happi/1.0","type":"surprise","ts":0}')  # no id
+    with pytest.raises(EventError):
+        from_json_line('{"v":"happi/9.9","id":"r","type":"surprise","ts":0}')
 
 
 def test_missing_text_in_delta_raises():

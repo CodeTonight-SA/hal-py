@@ -153,8 +153,31 @@ class ContextEvent(Event):
     context_ref: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class UnknownEvent(Event):
+    """An event whose `type` this library does not recognise.
+
+    The spec makes this mandatory rather than optional: "unknown event
+    types/fields are ignored, never rejected". A newer runtime may introduce
+    event types that did not exist when this library was written, and a
+    consumer is required to forward them inertly rather than fail.
+
+    Rejecting them would also make the forward-compatible version policy
+    pointless — there is no value in accepting a happi/1.9 stream if the first
+    event type introduced in 1.9 raises. Everything the event carried is
+    preserved in `extra`, so a caller that DOES understand the new type can
+    still read it.
+
+    It is deliberately neither an outcome nor a post-terminator, so an unknown
+    event can never be mistaken for the end of a stream.
+    """
+
+    type: str = "unknown"
+
+
 # Dispatch table: type-string -> (class, required-fields)
-# Keeps from_dict's CC low by avoiding nested if/elif chains.
+# Keeps from_dict's CC low by avoiding nested if/elif chains. A type absent
+# from this table is not an error — see from_dict and UnknownEvent.
 _DISPATCH: dict[str, tuple[type, tuple[str, ...]]] = {
     "started": (StartedEvent, ()),
     "delta": (DeltaEvent, ("text",)),
@@ -180,9 +203,8 @@ def _validate_base(data: dict[str, Any]) -> None:
         )
     if not isinstance(data.get("id"), str) or not data["id"]:
         raise EventError("missing or invalid event 'id'")
-    etype = data.get("type")
-    if etype not in VALID_TYPES:
-        raise EventError(f"unknown event type: {etype!r}")
+    if not isinstance(data.get("type"), str) or not data["type"]:
+        raise EventError("missing or invalid event 'type'")
     if not isinstance(data.get("ts"), int) or data["ts"] < 0:
         raise EventError("missing or invalid 'ts' (must be non-negative int)")
 
@@ -195,10 +217,22 @@ def _check_required(data: dict[str, Any], required: Iterable[str]) -> None:
 
 
 def from_dict(data: dict[str, Any]) -> Event:
-    """Build the right typed Event subclass from a dict."""
+    """Build the right typed Event subclass from a dict.
+
+    An event whose `type` this library does not recognise becomes an
+    UnknownEvent rather than an error. The spec requires it: "unknown event
+    types/fields are ignored, never rejected". Rejecting them would undo the
+    forward-compatible version policy — there would be no point accepting a
+    happi/1.9 stream if the first event type introduced in 1.9 killed it.
+    """
     if not isinstance(data, dict):
         raise EventError("event must be a JSON object")
     _validate_base(data)
+    if data["type"] not in _DISPATCH:
+        return UnknownEvent(
+            v=data["v"], id=data["id"], ts=data["ts"], type=data["type"],
+            extra={k: val for k, val in data.items() if k not in _BASE_FIELDS},
+        )
     cls, required = _DISPATCH[data["type"]]
     _check_required(data, required)
     extra = {k: v for k, v in data.items()
