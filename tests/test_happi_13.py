@@ -75,9 +75,35 @@ def test_event_stream_from_a_1_3_runtime_parses():
     assert parsed[1].text == "happi/1.3"
 
 
-@pytest.mark.parametrize("bad", ["happi/0.9", "happi/2.0", "happi/1.4", "", "1.3"])
-def test_unknown_versions_still_rejected(bad):
-    # Widening the accept-set must not become "accept anything".
+@pytest.mark.parametrize("future", ["happi/1.4", "happi/1.5", "happi/1.12",
+                                    "happi/1.99"])
+def test_future_minors_of_the_same_major_are_accepted(future):
+    """A minor this library has never heard of must still parse.
+
+    A runtime stamps events with ITS OWN version, so a client will meet
+    versions newer than itself as a matter of course. This test previously
+    asserted the opposite — that happi/1.4 must be REJECTED — which encoded
+    the old fixed-enumeration policy. Under that policy the first conforming
+    happi/1.4 runtime to ship would have had its entire event stream dropped
+    by every released version of this library, and silently: a decoder that
+    refuses a version returns nothing rather than raising something visible
+    to the end user.
+    """
+    assert envelope.from_dict({"v": future, "id": "r", "cmd": "version"}).v == future
+    line = json.dumps({"v": future, "id": "r", "type": "started", "ts": 0})
+    assert from_json_line(line).v == future
+
+
+@pytest.mark.parametrize("bad", ["happi/0.9", "happi/2.0", "happi/2.1", "",
+                                 "1.3", "happi/", "happi/1", "happi/x.y",
+                                 "HAPPI/1.3", None])
+def test_other_majors_and_malformed_versions_are_rejected(bad):
+    """Widening to happi/1.x must not become "accept anything".
+
+    A MAJOR bump is the signal for a breaking change, so it is refused. So is
+    anything that is not a parseable happi/N.M string — otherwise the policy
+    would admit garbage rather than merely admitting the future.
+    """
     with pytest.raises(EnvelopeError):
         envelope.from_dict({"v": bad, "id": "r", "cmd": "version"})
     with pytest.raises(EventError):

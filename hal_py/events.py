@@ -32,13 +32,17 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Iterator
 
-#: Protocol version this library emits.
-HAPPI_VERSION = "happi/1.3"
+from . import happi
 
-#: Every protocol version this library accepts on the wire. Full back-compat
-#: is a HAPPI guarantee: a v1.3 runtime accepts v1.0 envelopes, and a v1.0
-#: client must tolerate v1.3 events.
-ACCEPTED_VERSIONS = ("happi/1.0", "happi/1.1", "happi/1.2", "happi/1.3")
+#: Protocol version this library emits.
+HAPPI_VERSION = happi.VERSION
+
+#: Protocol versions that existed when this module was written. Informational
+#: only — acceptance is decided by happi.is_accepted, which admits any
+#: happi/1.x. This matters most here: a runtime stamps events with its OWN
+#: version, so a client meeting a newer runtime sees versions this library has
+#: never heard of. Rejecting them would silently drop the entire stream.
+ACCEPTED_VERSIONS = happi.KNOWN_VERSIONS
 
 VALID_TYPES = (
     "started",
@@ -169,10 +173,10 @@ _BASE_FIELDS = ("v", "id", "type", "ts")
 
 def _validate_base(data: dict[str, Any]) -> None:
     """Raise EventError if base fields are wrong/missing."""
-    if data.get("v") not in ACCEPTED_VERSIONS:
+    if not happi.is_accepted(data.get("v")):
         raise EventError(
             f"unsupported version: {data.get('v')!r} "
-            f"(accepted: {', '.join(ACCEPTED_VERSIONS)})"
+            f"(accepted: {happi.accepted_list()})"
         )
     if not isinstance(data.get("id"), str) or not data["id"]:
         raise EventError("missing or invalid event 'id'")

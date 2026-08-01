@@ -1,29 +1,21 @@
 """Conformance tests — pipe envelopes through a real happi.md runtime.
 
-These tests run against `bash /Users/lauriescheepers/.hal/happi.md run` if
-present, otherwise they skip. The point is end-to-end falsification of the
-client/runtime contract: encode an Envelope, write to runtime stdin, parse
-NDJSON events from stdout, assert the stream conforms to happi.md.
+End-to-end falsification of the client/runtime contract: encode an Envelope,
+write it to a real runtime's stdin, parse the NDJSON events from stdout, and
+assert the stream conforms to happi.md.
+
+The runtime is located by tests/_runtime.py rather than a fixed path. These
+tests previously hard-coded one developer's home directory, so they skipped
+on every other machine — and a skip reports as success, which meant the only
+end-to-end checks in this suite had silently never run anywhere else.
 """
 from __future__ import annotations
-
-import os
-import shutil
-
-import pytest
 
 from hal_py import envelope as env_mod
 from hal_py.client import sync_dispatch
 from hal_py.events import VALID_TYPES
 
-HAPPI_PATH = "/Users/lauriescheepers/.hal/happi.md"
-RUNTIME_CMD = ["bash", HAPPI_PATH, "run"]
-
-_runtime_present = os.path.exists(HAPPI_PATH) and shutil.which("bash") is not None
-skip_no_runtime = pytest.mark.skipif(
-    not _runtime_present,
-    reason=f"happi.md runtime not found at {HAPPI_PATH} — conformance test skipped",
-)
+from ._runtime import RUNTIME_CMD, skip_no_runtime
 
 
 @skip_no_runtime

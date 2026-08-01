@@ -14,13 +14,17 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-#: Protocol version this library stamps on envelopes it builds.
-HAPPI_VERSION = "happi/1.3"
+from . import happi
 
-#: Every envelope version this library accepts. A v1.3 runtime accepts v1.0
-#: envelopes unchanged (full back-compat is a HAPPI guarantee), so a client
-#: that rejects them is stricter than the protocol and breaks interop.
-ACCEPTED_VERSIONS = ("happi/1.0", "happi/1.1", "happi/1.2", "happi/1.3")
+#: Protocol version this library stamps on envelopes it builds.
+HAPPI_VERSION = happi.VERSION
+
+#: Envelope versions that existed when this module was written. Informational
+#: only — acceptance is decided by happi.is_accepted, which admits any
+#: happi/1.x so a future minor is not rejected merely for being unknown here.
+#: See hal_py/happi.py for why the policy is a major-version rule rather than
+#: a fixed enumeration.
+ACCEPTED_VERSIONS = happi.KNOWN_VERSIONS
 
 # Reserved fields per happi.md envelope schema. Anything else round-trips
 # under the additionalProperties: true contract.
@@ -68,10 +72,10 @@ class Envelope:
 
 def _validate_required(env: dict[str, Any]) -> None:
     """Raise EnvelopeError if required fields are missing or malformed."""
-    if env.get("v") not in ACCEPTED_VERSIONS:
+    if not happi.is_accepted(env.get("v")):
         raise EnvelopeError(
             f"unsupported version: {env.get('v')!r} "
-            f"(accepted: {', '.join(ACCEPTED_VERSIONS)})"
+            f"(accepted: {happi.accepted_list()})"
         )
     eid = env.get("id")
     if not isinstance(eid, str) or not eid:

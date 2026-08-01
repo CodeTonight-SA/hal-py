@@ -27,7 +27,7 @@ Public API:
 
 Reference: https://gist.github.com/LaurieScheepers/2483d5c218c21ecc931130bcee7dee83
 """
-from . import cite, envelope, events, providers
+from . import cite, envelope, events, happi, providers
 from .cite import Citation, CiteError, Provenance, Source
 from .client import DispatchError, async_dispatch, sync_dispatch
 from .envelope import ACCEPTED_VERSIONS, Envelope, EnvelopeError, HAPPI_VERSION
@@ -47,11 +47,12 @@ from .events import (
     is_terminal,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "HAPPI_VERSION",
     "ACCEPTED_VERSIONS",
+    "happi",
     "__version__",
     # Envelope
     "Envelope",
