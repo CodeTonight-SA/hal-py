@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 import sys
 from pathlib import Path
 
@@ -358,6 +359,52 @@ def test_fuzzy_offsets_index_the_original_source():
 def test_an_empty_quote_is_not_found_rather_than_matching_everything():
     assert verify_quote("", "any text at all")[0] == "not_found"
     assert verify_quote("   ", "any text at all")[0] == "not_found"
+
+
+# ---------------------------------------------------------------------------
+# adversarial input — raised by an external review council
+# ---------------------------------------------------------------------------
+
+def test_a_quote_of_regex_metacharacters_is_matched_literally():
+    """The tolerant pass builds a regex from the quote, so leaving the quote
+    unescaped would let a caller inject a pattern instead of searching for
+    text."""
+    source = "literal (a+)+$ here"
+    status, start, end = verify_quote("(a+)+$", source)
+    assert status == "verified"
+    assert source[start:end] == "(a+)+$"
+
+
+def test_metacharacter_quote_absent_from_source_is_not_found():
+    # The complement of the test above: escaping must not turn into matching
+    # nothing, nor into matching everything.
+    assert verify_quote(".*", "no wildcards here")[0] == "not_found"
+
+
+def test_a_pathological_quote_does_not_hang():
+    """Bounded work on adversarial input.
+
+    The pattern shape is literal(\\s+literal)*, with no nested quantifiers and
+    no alternation, so it cannot backtrack exponentially, and measured worst
+    cases scale linearly. This pins that property rather than trusting the
+    reasoning behind it.
+    """
+    quote = " ".join(["a"] * 400)
+    source = " ".join(["a"] * 399) + " b"
+    started = time.perf_counter()
+    status, _, _ = verify_quote(quote, source)
+    elapsed = time.perf_counter() - started
+    assert status == "not_found"
+    assert elapsed < 2.0, f"tolerant pass took {elapsed:.2f}s on adversarial input"
+
+
+def test_an_over_long_quote_skips_fuzzing_but_still_matches_exactly():
+    """Past the token limit the tolerant pass is skipped, but the exact pass
+    still runs — so a genuinely present long quotation is still verified, and
+    an absent one errs toward not_found rather than a false verified."""
+    long_quote = " ".join(["word"] * 600)
+    assert verify_quote(long_quote, "prefix " + long_quote + " suffix")[0] == "verified"
+    assert verify_quote(long_quote, "nothing like it here")[0] == "not_found"
 
 
 # ---------------------------------------------------------------------------

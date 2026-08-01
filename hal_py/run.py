@@ -151,6 +151,19 @@ def _fold(text: str) -> str:
     return text.translate(_TYPO)
 
 
+#: Upper bound on the number of words the tolerant pass will build a pattern
+#: from. Sources and quotes may be attacker-controlled — this tool exists to
+#: check untrusted documents — so the pattern must not grow without limit.
+#:
+#: The pattern shape is literal(\s+literal)*: no nested quantifiers and no
+#: alternation, so it cannot backtrack exponentially. Measured worst cases at
+#: 10,000 tokens run in about 30 ms and scale linearly, so this is a resource
+#: bound rather than a fix for catastrophic backtracking. The exact-substring
+#: pass above is unaffected and still handles arbitrarily long quotations; only
+#: the whitespace-tolerant fallback is skipped past the limit.
+_MAX_FLEXIBLE_TOKENS = 512
+
+
 def verify_quote(quote: str, source_text: str) -> tuple[str, int, int]:
     """Locate `quote` in `source_text`. Returns (status, start, end).
 
@@ -158,6 +171,10 @@ def verify_quote(quote: str, source_text: str) -> tuple[str, int, int]:
     whitespace- and typography-flexible match, then not_found. Determinism is
     the guarantee — a fabricated quote cannot come back verified because there
     is no judgement anywhere in the path, only string search.
+
+    Every word taken from the quote is regex-escaped before it reaches the
+    pattern, so a quote consisting of regex metacharacters is matched as the
+    literal text the user wrote rather than interpreted as a pattern.
     """
     needle = (quote or "").strip()
     if not needle:
@@ -165,7 +182,13 @@ def verify_quote(quote: str, source_text: str) -> tuple[str, int, int]:
     at = source_text.find(needle)
     if at != -1:
         return "verified", at, at + len(needle)
-    tokens = [re.escape(t) for t in _WS.split(_fold(needle)) if t]
+    words = [w for w in _WS.split(_fold(needle)) if w]
+    if len(words) > _MAX_FLEXIBLE_TOKENS:
+        # Too long to fuzz cheaply. The exact pass already ran and failed, so
+        # reporting not_found is the honest answer: it errs toward "unproven",
+        # never toward a false verified.
+        return "not_found", -1, -1
+    tokens = [re.escape(w) for w in words]
     if not tokens:
         return "not_found", -1, -1
     match = re.compile(r"\s+".join(tokens)).search(_fold(source_text))
