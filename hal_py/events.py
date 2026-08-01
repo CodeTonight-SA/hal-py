@@ -1,7 +1,8 @@
-"""HAPPI/1.0 events — the seven event types.
+"""HAPPI/1.3 events — the seven streaming types plus two terminators.
 
-Per happi.md axiom 2: seven event types are sufficient. Every event carries
-v, id (echoes envelope id), type, ts (ms integer). Per-type fields:
+Per happi.md axiom 2: seven event types are sufficient for streaming. Every
+event carries v, id (echoes envelope id), type, ts (ms integer). Per-type
+fields:
 
     started      — (none)
     delta        — text
@@ -10,6 +11,17 @@ v, id (echoes envelope id), type, ts (ms integer). Per-type fields:
     sub_request  — envelope
     completed    — usage (optional)
     error        — code, message
+
+v1.1 added two non-streaming terminators, emitted AFTER completed/error:
+
+    idr          — idr_ref      (audit receipt: "what happened in this run?")
+    context      — context_ref  (memory-chain link: "what is this belief?")
+
+Version handling follows happi.md: this library ACCEPTS envelopes and events
+carrying any version in ACCEPTED_VERSIONS ("happi/1.0".."happi/1.3") and EMITS
+HAPPI_VERSION. A runtime always stamps events with its own version, never the
+envelope's — so a v1.0 request to a v1.3 runtime yields v1.3 events, and a
+strict equality check would reject a perfectly valid stream.
 
 Provider-specific data lives under provider.* sub-fields, which round-trip
 through the typed parser via the `extra` dict.
@@ -20,7 +32,13 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Iterator
 
-HAPPI_VERSION = "happi/1.0"
+#: Protocol version this library emits.
+HAPPI_VERSION = "happi/1.3"
+
+#: Every protocol version this library accepts on the wire. Full back-compat
+#: is a HAPPI guarantee: a v1.3 runtime accepts v1.0 envelopes, and a v1.0
+#: client must tolerate v1.3 events.
+ACCEPTED_VERSIONS = ("happi/1.0", "happi/1.1", "happi/1.2", "happi/1.3")
 
 VALID_TYPES = (
     "started",
@@ -30,7 +48,12 @@ VALID_TYPES = (
     "sub_request",
     "completed",
     "error",
+    "idr",
+    "context",
 )
+
+#: Valid `context_ref.kind` values per happi.md CONTEXT section.
+CONTEXT_KINDS = ("context-delta", "context-snapshot", "context-supersede")
 
 # Standard error codes per happi.md.
 ERROR_CODES = ("parse_error", "unsupported_cmd", "auth_error", "runtime_error")
@@ -97,6 +120,35 @@ class ErrorEvent(Event):
     message: str = ""
 
 
+@dataclass
+class IdrEvent(Event):
+    """Intent Decision Record — the audit receipt for one dispatch (v1.1).
+
+    `idr_ref` carries the content hash of (envelope JSON + event NDJSON):
+    sha256 (required), model_versions (required), cid and block_anchor
+    (optional). Emitted after completed/error when flags.audit=true, or
+    explicitly via cmd `idr.emit`.
+    """
+
+    type: str = "idr"
+    idr_ref: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ContextEvent(Event):
+    """Replayable memory-chain link — the structural twin of `idr` (v1.1).
+
+    `context_ref` content-addresses the *decision body* (excluding the
+    volatile id/ts/audit fields), so two records with identical semantic
+    content share one sha256 — the dedup/merkle coordinate. Required:
+    sha256, kind, model_versions. Optional: predecessor_context,
+    snapshot_ref. Emitted via cmd `context.append`.
+    """
+
+    type: str = "context"
+    context_ref: dict[str, Any] = field(default_factory=dict)
+
+
 # Dispatch table: type-string -> (class, required-fields)
 # Keeps from_dict's CC low by avoiding nested if/elif chains.
 _DISPATCH: dict[str, tuple[type, tuple[str, ...]]] = {
@@ -107,6 +159,8 @@ _DISPATCH: dict[str, tuple[type, tuple[str, ...]]] = {
     "sub_request": (SubRequestEvent, ("envelope",)),
     "completed": (CompletedEvent, ()),
     "error": (ErrorEvent, ("code", "message")),
+    "idr": (IdrEvent, ("idr_ref",)),
+    "context": (ContextEvent, ("context_ref",)),
 }
 
 # Fields shared by every event — already extracted before dispatch.
@@ -115,8 +169,11 @@ _BASE_FIELDS = ("v", "id", "type", "ts")
 
 def _validate_base(data: dict[str, Any]) -> None:
     """Raise EventError if base fields are wrong/missing."""
-    if data.get("v") != HAPPI_VERSION:
-        raise EventError(f"unsupported version: {data.get('v')!r}")
+    if data.get("v") not in ACCEPTED_VERSIONS:
+        raise EventError(
+            f"unsupported version: {data.get('v')!r} "
+            f"(accepted: {', '.join(ACCEPTED_VERSIONS)})"
+        )
     if not isinstance(data.get("id"), str) or not data["id"]:
         raise EventError("missing or invalid event 'id'")
     etype = data.get("type")
@@ -167,6 +224,25 @@ def parse_stream(text: str) -> Iterator[Event]:
             yield from_json_line(line)
 
 
+#: Events that report the OUTCOME of a dispatch. Exactly one per stream.
+OUTCOME_TYPES = ("completed", "error")
+
+#: Non-streaming records emitted AFTER the outcome event (v1.1). A stream may
+#: carry at most one of each; they do not replace the outcome event.
+POST_TERMINATOR_TYPES = ("idr", "context")
+
+
 def is_terminal(event: Event) -> bool:
-    """Return True if this event ends the stream (completed or error)."""
-    return event.type in ("completed", "error")
+    """Return True if this event reports the dispatch outcome.
+
+    Note (v1.1+): the outcome event is NOT always the LAST event. When
+    flags.audit=true the runtime appends an `idr` record after it, and
+    cmd `context.append` appends a `context` record. Use is_post_terminator
+    to recognise those; do not treat their presence as a protocol violation.
+    """
+    return event.type in OUTCOME_TYPES
+
+
+def is_post_terminator(event: Event) -> bool:
+    """Return True for records emitted after the outcome event (idr/context)."""
+    return event.type in POST_TERMINATOR_TYPES

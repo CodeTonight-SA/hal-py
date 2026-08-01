@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hal-py"
-version = "0.1.0"
-description = "HAPPI/1.0 Python client library — AI as a syscall"
+version = "0.2.0"
+description = "HAPPI/1.3 Python client library — AI as a syscall"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
@@ -29,7 +29,7 @@ dev = ["pytest>=7"]
 
 [project.urls]
 Homepage = "https://github.com/CodeTonight-SA/hal-py"
-"Reference Spec" = "https://github.com/CodeTonight-SA/HAL/blob/main/happi.md"
+"Reference Spec" = "https://gist.github.com/LaurieScheepers/2483d5c218c21ecc931130bcee7dee83"
 
 [tool.setuptools.packages.find]
 include = ["hal_py*"]

@@ -44,13 +44,24 @@ SAMPLE_STREAM = (
 )
 
 
-def test_all_seven_types_present_in_module():
-    # Falsifier for axiom 2 at the API surface.
+def test_all_seven_streaming_types_present_in_module():
+    # Falsifier for axiom 2 at the API surface: the 7 streaming types must
+    # all still be present. Written as a subset check so adding a v1.1
+    # terminator cannot silently delete one of the original seven.
+    assert {
+        "started", "delta", "tool_call", "tool_result",
+        "sub_request", "completed", "error",
+    } <= set(VALID_TYPES)
+
+
+def test_v11_terminators_present_in_module():
+    # v1.1 adds two non-streaming terminators on top of the 7 streaming types.
     assert set(VALID_TYPES) == {
         "started", "delta", "tool_call", "tool_result",
         "sub_request", "completed", "error",
+        "idr", "context",
     }
-    assert len(VALID_TYPES) == 7
+    assert len(VALID_TYPES) == 9
 
 
 def test_parse_stream_yields_all_seven_types():

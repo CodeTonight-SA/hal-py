@@ -1,4 +1,4 @@
-"""HAPPI/1.0 envelope — encode, decode, validate.
+"""HAPPI/1.3 envelope — encode, decode, validate.
 
 The envelope is the canonical input to a HAPPI runtime. One JSON envelope
 in (stdin), one NDJSON event stream out (stdout). The schema is defined in
@@ -14,7 +14,13 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-HAPPI_VERSION = "happi/1.0"
+#: Protocol version this library stamps on envelopes it builds.
+HAPPI_VERSION = "happi/1.3"
+
+#: Every envelope version this library accepts. A v1.3 runtime accepts v1.0
+#: envelopes unchanged (full back-compat is a HAPPI guarantee), so a client
+#: that rejects them is stricter than the protocol and breaks interop.
+ACCEPTED_VERSIONS = ("happi/1.0", "happi/1.1", "happi/1.2", "happi/1.3")
 
 # Reserved fields per happi.md envelope schema. Anything else round-trips
 # under the additionalProperties: true contract.
@@ -62,8 +68,11 @@ class Envelope:
 
 def _validate_required(env: dict[str, Any]) -> None:
     """Raise EnvelopeError if required fields are missing or malformed."""
-    if env.get("v") != HAPPI_VERSION:
-        raise EnvelopeError(f"unsupported version: {env.get('v')!r}")
+    if env.get("v") not in ACCEPTED_VERSIONS:
+        raise EnvelopeError(
+            f"unsupported version: {env.get('v')!r} "
+            f"(accepted: {', '.join(ACCEPTED_VERSIONS)})"
+        )
     eid = env.get("id")
     if not isinstance(eid, str) or not eid:
         raise EnvelopeError("missing or invalid 'id' (must be non-empty string)")
