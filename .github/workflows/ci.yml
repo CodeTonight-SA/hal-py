@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # pyproject.toml defines the hal_py package; the dev extra brings pytest.
+      - name: Install package
+        run: pip install -e ".[dev]"
+      # Real suite: tests/ holds the envelope/events/run/happi-1.3 tests
+      # (148 passing when this workflow was added). Conformance tests that
+      # need a live happi.md runtime skip cleanly when HAPPI_MD is unset.
+      - name: Run tests
+        run: pytest -q

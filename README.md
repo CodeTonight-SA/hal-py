@@ -138,4 +138,13 @@ HAPPI_MD=/tmp/happi.md pytest tests/ -v
 ## Reference
 
 - Spec: <https://gist.github.com/LaurieScheepers/2483d5c218c21ecc931130bcee7dee83>
-- License: MIT
+
+## Licence
+
+AGPL-3.0-only. Copyright (C) 2024-2026 Lourens Cornelius Scheepers /
+CodeTonight (Pty) Ltd.
+
+Under the AGPL, running a modified version of this library as part of a
+network service counts as distribution — users interacting with it over a
+network are entitled to the corresponding source. Full text in
+[LICENSE](LICENSE).
