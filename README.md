@@ -148,3 +148,6 @@ Under the AGPL, running a modified version of this library as part of a
 network service counts as distribution — users interacting with it over a
 network are entitled to the corresponding source. Full text in
 [LICENSE](LICENSE).
+
+**Commercial licences.** If the AGPL's network-use obligation does not fit your
+deployment, a commercial licence is available — contact licensing@codetonight.co.za.
