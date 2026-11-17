@@ -141,13 +141,10 @@ HAPPI_MD=/tmp/happi.md pytest tests/ -v
 
 ## Licence
 
-AGPL-3.0-only. Copyright (C) 2024-2026 Lourens Cornelius Scheepers /
-CodeTonight (Pty) Ltd.
+Apache-2.0. See [LICENSE](LICENSE).
 
-Under the AGPL, running a modified version of this library as part of a
-network service counts as distribution — users interacting with it over a
-network are entitled to the corresponding source. Full text in
-[LICENSE](LICENSE).
+Copyright (C) 2024-2026 Lourens Cornelius Scheepers / CodeTonight (Pty) Ltd
 
-**Commercial licences.** If the AGPL's network-use obligation does not fit your
-deployment, a commercial licence is available — contact licensing@codetonight.co.za.
+You may use, modify and redistribute this library in any project, open or
+closed source, under the Apache License, version 2.0, which includes an
+express patent grant. Earlier releases were published under AGPL-3.0-only.
